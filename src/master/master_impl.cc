@@ -46,6 +46,7 @@ DECLARE_string(tera_master_meta_table_path);
 DECLARE_int32(tera_master_meta_retry_times);
 
 DECLARE_bool(tera_zk_enabled);
+DECLARE_bool(tera_ins_enabled);
 
 DECLARE_int64(tera_master_split_tablet_size);
 DECLARE_int64(tera_master_merge_tablet_size);
@@ -120,6 +121,8 @@ MasterImpl::~MasterImpl() {
 bool MasterImpl::Init() {
     if (FLAGS_tera_zk_enabled) {
         m_zk_adapter.reset(new MasterZkAdapter(this, m_local_addr));
+    } else if (FLAGS_tera_ins_enabled) {
+        m_zk_adapter.reset(new InsMasterZkAdapter(this, m_local_addr));
     } else {
         LOG(INFO) << "fake zk mode!";
         m_zk_adapter.reset(new FakeMasterZkAdapter(this, m_local_addr));

@@ -17,7 +17,7 @@ DEFINE_int32(tera_heartbeat_retry_times, 5, "the max retry times when fail to se
 
 DEFINE_string(tera_working_dir, "./", "the base dir for system data");
 
-DEFINE_bool(tera_zk_enabled, true, "enable zk adapter to collaborate with other master instances");
+DEFINE_bool(tera_zk_enabled, false, "enable zk adapter to collaborate with other master instances");
 DEFINE_string(tera_zk_addr_list, "localhost:2180", "zookeeper server list");
 DEFINE_string(tera_zk_root_path, "/tera", "zookeeper root path");
 DEFINE_string(tera_fake_zk_path_prefix, "../fakezk", "fake zk path prefix in onebox tera");
@@ -229,3 +229,8 @@ DEFINE_int64(tera_sdk_scan_async_cache_size, 16, "the max buffer size (in MB) fo
 DEFINE_int32(tera_sdk_scan_async_parallel_max_num, 500, "the max number of concurrent task sending");
 
 DEFINE_bool(tera_sdk_pend_request_while_scan_meta_enabled, true, "pend request util meta-scan operation finished");
+
+DEFINE_bool(tera_ins_enabled, true, "enable ins adapter to collaborate with other master instances");
+DEFINE_string(tera_ins_addr_list, "", "");
+DEFINE_string(tera_ins_root_path,"", "");
+

@@ -7,6 +7,7 @@
 #include "tabletnode/tabletnode_zk_adapter.h"
 #include "types.h"
 #include "zk/zk_util.h"
+#include "ins_sdk.h"
 
 DECLARE_string(tera_zk_addr_list);
 DECLARE_string(tera_zk_root_path);
@@ -14,6 +15,8 @@ DECLARE_string(tera_fake_zk_path_prefix);
 DECLARE_string(tera_tabletnode_port);
 DECLARE_int32(tera_zk_timeout);
 DECLARE_int64(tera_zk_retry_period);
+DECLARE_string(tera_ins_addr_list);
+DECLARE_string(tera_ins_root_path);
 
 namespace tera {
 namespace tabletnode {
@@ -326,5 +329,35 @@ bool FakeTabletNodeZkAdapter::GetRootTableAddr(std::string* root_table_addr) {
     }
     return true;
 }
+
+InsTabletNodeZkAdapter::InsTabletNodeZkAdapter(TabletNodeImpl* tabletnode_impl,
+                                               const std::string& server_addr)
+    : m_tabletnode_impl(tabletnode_impl), m_server_addr(server_addr) {
+    
+}
+
+void InsTabletNodeZkAdapter::Init() {
+    std::string root_path = FLAGS_tera_ins_root_path;
+    galaxy::ins::sdk::SDKError err;
+    m_ins_sdk = new galaxy::ins::sdk::InsSDK(FLAGS_tera_ins_addr_list);
+    std::string key = root_path + kTsListPath + "/" + m_server_addr;
+    CHECK(m_ins_sdk->Lock(key, &err)) << "register fail";
+    std::string session_id = m_ins_sdk->GetSessionID();
+    LOG(INFO) << "create ts-node success: " << session_id;
+    m_tabletnode_impl->SetSessionId(session_id);
+    m_tabletnode_impl->SetTabletNodeStatus(TabletNodeImpl::kIsRunning);
+}
+
+bool InsTabletNodeZkAdapter::GetRootTableAddr(std::string* root_table_addr) {
+    MutexLock locker(&m_mutex);
+    std::string root_path = FLAGS_tera_ins_root_path;
+    std::string meta_table = root_path + kRootTabletNodePath;
+    galaxy::ins::sdk::SDKError err;
+    std::string value;
+    CHECK(m_ins_sdk->Get(meta_table, &value, &err));
+    *root_table_addr = value;
+    return true;
+}
+
 } // namespace tabletnode
 } // namespace tera
