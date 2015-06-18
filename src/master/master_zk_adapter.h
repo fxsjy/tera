@@ -148,7 +148,7 @@ public:
     virtual bool UnmarkSafeMode();
     virtual bool UpdateRootTabletNode(const std::string& root_tablet_addr);
     void RefreshTabletNodeList();
-
+    void OnLockChange(std::string session_id, bool deleted);
 private:
     virtual void OnChildrenChanged(const std::string& path,
                                    const std::vector<std::string>& name_list,

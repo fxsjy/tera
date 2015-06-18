@@ -632,6 +632,12 @@ static void InsOnTsChange(const galaxy::ins::sdk::WatchParam& param,
     ins_adp->RefreshTabletNodeList();
 }
 
+static void InsOnLockChange(const galaxy::ins::sdk::WatchParam& param, 
+                            galaxy::ins::sdk::SDKError error) {
+    InsMasterZkAdapter* ins_adp = static_cast<InsMasterZkAdapter*>(param.context);
+    ins_adp->OnLockChange(param.value, param.deleted);
+}
+
 bool InsMasterZkAdapter::Init(std::string* root_tablet_addr,
                                std::map<std::string, std::string>* tabletnode_list,
                                bool* safe_mode) {
@@ -647,6 +653,8 @@ bool InsMasterZkAdapter::Init(std::string* root_tablet_addr,
     CHECK(m_ins_sdk->Put(master_path, m_server_addr, &err)) << "writer master fail";
     galaxy::ins::sdk::ScanResult* result = m_ins_sdk->Scan(ts_list_path+"/!", 
                                                            ts_list_path+"/~");
+    CHECK(m_ins_sdk->Watch(master_lock, InsOnLockChange, this, &err)) 
+         << "watch lock fail";
     while (!result->Done()) {
         CHECK_EQ(result->Error(), galaxy::ins::sdk::kOK);
         std::string session_id = result->Value();
@@ -656,8 +664,8 @@ bool InsMasterZkAdapter::Init(std::string* root_tablet_addr,
         (*tabletnode_list)[ts_addr] = session_id;
         result->Next();
     }                       
-    m_ins_sdk->Watch(ts_list_path, &InsOnTsChange,
-                     this, &err);                                  
+    CHECK(m_ins_sdk->Watch(ts_list_path, &InsOnTsChange,
+                           this, &err)) << "watch ts failed";
     return true;
 }
 
@@ -666,9 +674,12 @@ void InsMasterZkAdapter::RefreshTabletNodeList() {
     std::string master_lock = root_path + kMasterLockPath;
     std::string master_path = root_path + kMasterNodePath;
     std::string ts_list_path = root_path + kTsListPath;
-    std::string kick_path = root_path + kKickPath;
+    galaxy::ins::sdk::SDKError err;
+    CHECK(m_ins_sdk->Watch(ts_list_path, &InsOnTsChange,
+                     this, &err)) << "watch ts failed";
     galaxy::ins::sdk::ScanResult* result = m_ins_sdk->Scan(ts_list_path+"/!", 
                                                            ts_list_path+"/~");
+
     std::map<std::string, std::string> tabletnode_list;
     while (!result->Done()) {
         CHECK_EQ(result->Error(), galaxy::ins::sdk::kOK);
@@ -680,14 +691,22 @@ void InsMasterZkAdapter::RefreshTabletNodeList() {
         result->Next();
     }                
     m_master_impl->RefreshTabletNodeList(tabletnode_list);    
-    galaxy::ins::sdk::SDKError err;
-    m_ins_sdk->Watch(ts_list_path, &InsOnTsChange,
-                     this, &err);  
+}
+
+void InsMasterZkAdapter::OnLockChange(std::string session_id, bool deleted) {
+    if (deleted || session_id != m_ins_sdk->GetSessionID()) {
+        LOG(FATAL) << "master lock lost";
+        exit(1);
+    }
 }
 
 bool InsMasterZkAdapter::KickTabletServer(const std::string& ts_host,
-                                           const std::string& ts_zk_id) {
-    return true;
+                                          const std::string& ts_zk_id) {
+    std::string root_path = FLAGS_tera_ins_root_path;
+    std::string kick_path = root_path + kKickPath;
+    galaxy::ins::sdk::SDKError err;
+    bool ret = m_ins_sdk->Put(kick_path + "/" + ts_zk_id, ts_host, &err);
+    return ret;
 }
 
 bool InsMasterZkAdapter::MarkSafeMode() {

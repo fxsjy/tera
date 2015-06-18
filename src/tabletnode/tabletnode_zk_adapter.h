@@ -109,7 +109,9 @@ public:
     virtual ~InsTabletNodeZkAdapter() {}
     virtual void Init();
     virtual bool GetRootTableAddr(std::string* root_table_addr);
-
+    void OnKickMarkCreated();
+    void OnLockChange(std::string session_id, bool deleted);
+    void OnMetaChange(std::string meta_addr, bool deleted);
 private:
     virtual void OnChildrenChanged(const std::string& path,
                                    const std::vector<std::string>& name_list,

@@ -336,16 +336,72 @@ InsTabletNodeZkAdapter::InsTabletNodeZkAdapter(TabletNodeImpl* tabletnode_impl,
     
 }
 
+static void InsOnKick(const galaxy::ins::sdk::WatchParam& param, 
+                      galaxy::ins::sdk::SDKError error) {
+    LOG(INFO) << "recv kick event" ;
+    InsTabletNodeZkAdapter* ins_adp = static_cast<InsTabletNodeZkAdapter*>(param.context);
+    ins_adp->OnKickMarkCreated();
+}
+
+static void InsOnLockChange(const galaxy::ins::sdk::WatchParam& param, 
+                           galaxy::ins::sdk::SDKError error) {
+    LOG(INFO) << "recv lock change event" ;
+    InsTabletNodeZkAdapter* ins_adp = static_cast<InsTabletNodeZkAdapter*>(param.context);
+    ins_adp->OnLockChange(param.value, param.deleted);
+}
+
+static void InsOnMetaChange(const galaxy::ins::sdk::WatchParam& param, 
+                            galaxy::ins::sdk::SDKError error) {
+    LOG(INFO) << "recv meta change event" ;
+    InsTabletNodeZkAdapter* ins_adp = static_cast<InsTabletNodeZkAdapter*>(param.context);
+    ins_adp->OnMetaChange(param.value, param.deleted);
+}
+
 void InsTabletNodeZkAdapter::Init() {
     std::string root_path = FLAGS_tera_ins_root_path;
     galaxy::ins::sdk::SDKError err;
     m_ins_sdk = new galaxy::ins::sdk::InsSDK(FLAGS_tera_ins_addr_list);
-    std::string key = root_path + kTsListPath + "/" + m_server_addr;
-    CHECK(m_ins_sdk->Lock(key, &err)) << "register fail";
+    std::string lock_key = root_path + kTsListPath + "/" + m_server_addr;
+    CHECK(m_ins_sdk->Lock(lock_key, &err)) << "register fail";
     std::string session_id = m_ins_sdk->GetSessionID();
     LOG(INFO) << "create ts-node success: " << session_id;
     m_tabletnode_impl->SetSessionId(session_id);
     m_tabletnode_impl->SetTabletNodeStatus(TabletNodeImpl::kIsRunning);
+    std::string kick_key = root_path + kKickPath + "/" + session_id;
+    CHECK(m_ins_sdk->Watch(kick_key, &InsOnKick, this, &err)) << "watch kick fail";
+    CHECK(m_ins_sdk->Watch(lock_key, &InsOnLockChange, this, &err))
+          << "watch lock fail";
+    std::string meta_table = root_path + kRootTabletNodePath;
+    CHECK(m_ins_sdk->Watch(meta_table, &InsOnMetaChange, this, &err))
+          << "watch meta table fail";
+}
+
+void InsTabletNodeZkAdapter::OnMetaChange(std::string meta_addr, bool deleted) {
+    (void) meta_addr;
+    (void) deleted;
+    std::string cur_meta;
+    std::string root_path = FLAGS_tera_ins_root_path;
+    std::string meta_table = root_path + kRootTabletNodePath;
+    galaxy::ins::sdk::SDKError err;
+    CHECK(m_ins_sdk->Watch(meta_table, &InsOnMetaChange, this, &err))
+          << "watch meta table fail";
+    GetRootTableAddr(&cur_meta);
+    if (!cur_meta.empty()) {
+        MutexLock locker(&m_mutex);
+        m_tabletnode_impl->SetRootTabletAddr(cur_meta);        
+    }
+}
+
+void InsTabletNodeZkAdapter::OnKickMarkCreated() {
+    LOG(FATAL) << "I am kicked by master";
+    abort();
+}
+
+void InsTabletNodeZkAdapter::OnLockChange(std::string session_id, bool deleted) {
+    if (deleted || session_id != m_ins_sdk->GetSessionID()) {
+        LOG(FATAL) << "I lost my lock , so quit";
+        abort();
+    }
 }
 
 bool InsTabletNodeZkAdapter::GetRootTableAddr(std::string* root_table_addr) {
