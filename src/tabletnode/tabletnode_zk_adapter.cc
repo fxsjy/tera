@@ -383,9 +383,9 @@ void InsTabletNodeZkAdapter::OnMetaChange(std::string meta_addr, bool deleted) {
     std::string root_path = FLAGS_tera_ins_root_path;
     std::string meta_table = root_path + kRootTabletNodePath;
     galaxy::ins::sdk::SDKError err;
+    GetRootTableAddr(&cur_meta);
     CHECK(m_ins_sdk->Watch(meta_table, &InsOnMetaChange, this, &err))
           << "watch meta table fail";
-    GetRootTableAddr(&cur_meta);
     if (!cur_meta.empty()) {
         MutexLock locker(&m_mutex);
         m_tabletnode_impl->SetRootTabletAddr(cur_meta);        

@@ -144,23 +144,22 @@ public:
 
     virtual bool KickTabletServer(const std::string& ts_host,
                                   const std::string& ts_zk_id);
-    virtual bool MarkSafeMode();
-    virtual bool UnmarkSafeMode();
+    virtual bool MarkSafeMode() {return true;}
+    virtual bool UnmarkSafeMode() {return true;}
     virtual bool UpdateRootTabletNode(const std::string& root_tablet_addr);
     void RefreshTabletNodeList();
     void OnLockChange(std::string session_id, bool deleted);
+    void OnSessionTimeout();
 private:
     virtual void OnChildrenChanged(const std::string& path,
                                    const std::vector<std::string>& name_list,
-                                   const std::vector<std::string>& data_list);
+                                   const std::vector<std::string>& data_list) {}
     virtual void OnNodeValueChanged(const std::string& path,
-                                    const std::string& value);
-    virtual void OnNodeCreated(const std::string& path);
-    virtual void OnNodeDeleted(const std::string& path);
+                                    const std::string& value) {}
+    virtual void OnNodeCreated(const std::string& path) {}
+    virtual void OnNodeDeleted(const std::string& path) {}
     virtual void OnWatchFailed(const std::string& path, int watch_type,
-                               int err);
-    virtual void OnSessionTimeout();
-
+                               int err) {}
 private:
     mutable Mutex m_mutex;
     MasterImpl * m_master_impl;

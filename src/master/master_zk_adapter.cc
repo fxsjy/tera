@@ -638,6 +638,11 @@ static void InsOnLockChange(const galaxy::ins::sdk::WatchParam& param,
     ins_adp->OnLockChange(param.value, param.deleted);
 }
 
+static void InsOnSessionTimeout(void * context) {
+    InsMasterZkAdapter* ins_adp = static_cast<InsMasterZkAdapter*>(context);
+    ins_adp->OnSessionTimeout();
+}
+
 bool InsMasterZkAdapter::Init(std::string* root_tablet_addr,
                                std::map<std::string, std::string>* tabletnode_list,
                                bool* safe_mode) {
@@ -666,6 +671,7 @@ bool InsMasterZkAdapter::Init(std::string* root_tablet_addr,
     }                       
     CHECK(m_ins_sdk->Watch(ts_list_path, &InsOnTsChange,
                            this, &err)) << "watch ts failed";
+    m_ins_sdk->RegisterSessionTimeout(InsOnSessionTimeout, this);
     return true;
 }
 
@@ -709,46 +715,18 @@ bool InsMasterZkAdapter::KickTabletServer(const std::string& ts_host,
     return ret;
 }
 
-bool InsMasterZkAdapter::MarkSafeMode() {
-    return true;
-}
-
-bool InsMasterZkAdapter::UnmarkSafeMode() {
-    return true;
-}
-
 bool InsMasterZkAdapter::UpdateRootTabletNode(const std::string& root_tablet_addr) {
     std::string root_path = FLAGS_tera_ins_root_path;
     std::string meta_path = root_path + kRootTabletNodePath;
     galaxy::ins::sdk::SDKError err;
-    CHECK(m_ins_sdk->Put(meta_path, root_tablet_addr, &err));
-    return true;
-}
-
-void InsMasterZkAdapter::OnChildrenChanged(const std::string& path,
-                                            const std::vector<std::string>& name_list,
-                                            const std::vector<std::string>& data_list) {
-
-}
-
-void InsMasterZkAdapter::OnNodeValueChanged(const std::string& path,
-                                             const std::string& value) {
-
-}
-
-void InsMasterZkAdapter::OnNodeCreated(const std::string& path) {
-}
-
-void InsMasterZkAdapter::OnNodeDeleted(const std::string& path) {
-
-}
-
-void InsMasterZkAdapter::OnWatchFailed(const std::string& path,
-                                        int watch_type,
-                                        int err) {
+    bool ret = m_ins_sdk->Put(meta_path, root_tablet_addr, &err);
+    return ret;
 }
 
 void InsMasterZkAdapter::OnSessionTimeout() {
+    MutexLock lock(&m_mutex);
+    LOG(FATAL) << "ins sessiont timeout";
+    abort();   
 }
 
 } // namespace master
