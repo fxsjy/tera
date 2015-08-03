@@ -5,15 +5,15 @@
 #       automatically config this for you.
 ################################################################
 
-SOFA_PBRPC_PREFIX=
-PROTOBUF_PREFIX=
-SNAPPY_PREFIX=
-ZOOKEEPER_PREFIX=
-GFLAGS_PREFIX=
-GLOG_PREFIX=
-GPERFTOOLS_PREFIX=
-INS_PREFIX=
-BOOST_INCDIR=
+SOFA_PBRPC_PREFIX=./thirdparty
+PROTOBUF_PREFIX=./thirdparty
+SNAPPY_PREFIX=./thirdparty
+ZOOKEEPER_PREFIX=./thirdparty
+GFLAGS_PREFIX=./thirdparty
+GLOG_PREFIX=./thirdparty
+GPERFTOOLS_PREFIX=./thirdparty
+INS_PREFIX=./thirdparty
+BOOST_INCDIR=./thirdparty/boost_1_57_0
 
 SOFA_PBRPC_INCDIR = $(SOFA_PBRPC_PREFIX)/include
 PROTOBUF_INCDIR = $(PROTOBUF_PREFIX)/include
@@ -48,4 +48,4 @@ DEPS_LDPATH = -L$(SOFA_PBRPC_LIBDIR) -L$(PROTOBUF_LIBDIR) \
               -L$(GFLAGS_LIBDIR) -L$(GLOG_LIBDIR) \
               -L$(GPERFTOOLS_LIBDIR) -L$(INS_LIBDIR)
 DEPS_LDFLAGS = -lins_sdk -lsofa-pbrpc -lprotobuf -lsnappy -lzookeeper_mt \
-               -lgflags -lglog -ltcmalloc_minimal
+               -lgflags -lglog -ltcmalloc_minimal -lunwind
