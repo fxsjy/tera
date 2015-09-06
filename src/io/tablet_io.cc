@@ -977,7 +977,7 @@ bool TabletIO::ReadCells(const RowReaderInfo& row_reader, RowResult* value_list,
     }
 
     ScanOptions scan_options;
-    bool ll_seek_available = true;
+    bool ll_seek_available = false;
     for (int32_t i = 0; i < row_reader.cf_list_size(); ++i) {
         const ColumnFamily& column_family = row_reader.cf_list(i);
         const std::string& column_family_name = column_family.family_name();
