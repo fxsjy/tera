@@ -319,7 +319,7 @@ void TableImpl::CommitScan(ScanTask* scan_task,
 
     ScanDescImpl* impl = stream->GetScanDesc();
     request->set_sequence_id(_last_sequence_id++);
-    request->set_table_name(_name);
+    request->set_table_name(GetName());
     request->set_start(impl->GetStartRowKey());
     request->set_end(impl->GetEndRowKey());
     request->set_snapshot_id(impl->GetSnapshot());
@@ -385,7 +385,7 @@ void TableImpl::ScanCallBack(ScanTask* scan_task,
 
     StatusCode err = response->status();
     if (err != kTabletNodeOk && err != kSnapshotNotExist) {
-        VLOG(10) << "fail to scan table: " << _name
+        VLOG(10) << "fail to scan table: " << GetName()
             << " errcode: " << StatusCodeToString(err);
     }
 
@@ -651,7 +651,7 @@ void TableImpl::CommitMutations(const std::string& server_addr,
     WriteTabletRequest* request = new WriteTabletRequest;
     WriteTabletResponse* response = new WriteTabletResponse;
     request->set_sequence_id(_last_sequence_id++);
-    request->set_tablet_name(_name);
+    request->set_tablet_name(GetName());
     request->set_is_sync(FLAGS_tera_sdk_write_sync);
 
     std::vector<int64_t>* mu_id_list = new std::vector<int64_t>;
@@ -727,7 +727,7 @@ void TableImpl::MutateCallBack(std::vector<int64_t>* mu_id_list,
             continue;
         }
 
-        VLOG(10) << "fail to mutate table: " << _name
+        VLOG(10) << "fail to mutate table: " << GetName()
             << " row: " << DebugString(row)
             << " errcode: " << StatusCodeToString(err);
 
@@ -986,7 +986,7 @@ void TableImpl::CommitReaders(const std::string server_addr,
     ReadTabletRequest* request = new ReadTabletRequest;
     ReadTabletResponse* response = new ReadTabletResponse;
     request->set_sequence_id(_last_sequence_id++);
-    request->set_tablet_name(_name);
+    request->set_tablet_name(GetName());
     request->set_client_timeout_ms(_pending_timeout_ms);
     for (uint32_t i = 0; i < reader_list.size(); ++i) {
         RowReaderImpl* row_reader = reader_list[i];
@@ -1064,7 +1064,7 @@ void TableImpl::ReaderCallBack(std::vector<int64_t>* reader_id_list,
             continue;
         }
 
-        VLOG(10) << "fail to read table: " << _name
+        VLOG(10) << "fail to read table: " << GetName()
             << " errcode: " << StatusCodeToString(err);
 
         SdkTask* task = _task_pool.GetTask(reader_id);
@@ -1345,7 +1345,7 @@ void TableImpl::ScanMetaTableAsync(const std::string& key_start, const std::stri
     ScanTabletResponse* response = new ScanTabletResponse;
     request->set_sequence_id(_last_sequence_id++);
     request->set_table_name(FLAGS_tera_master_meta_table_name);
-    MetaTableScanRange(_name, key_start, expand_key_end,
+    MetaTableScanRange(GetName(), key_start, expand_key_end,
                        request->mutable_start(),
                        request->mutable_end());
     request->set_buffer_limit(FLAGS_tera_sdk_update_meta_buffer_limit);
@@ -1691,7 +1691,7 @@ void TableImpl::ReadTableMetaAsync(ErrorCode* ret_err, int32_t retry_times,
     request->set_sequence_id(_last_sequence_id++);
     request->set_tablet_name(FLAGS_tera_master_meta_table_name);
     RowReaderInfo* row_info = request->add_row_info_list();
-    MakeMetaTableKey(_name, row_info->mutable_key());
+    MakeMetaTableKey(GetName(), row_info->mutable_key());
 
     Closure<void, ReadTabletRequest*, ReadTabletResponse*, bool, int>* done =
         NewClosure(this, &TableImpl::ReadTableMetaCallBack, ret_err, retry_times);
@@ -1880,9 +1880,9 @@ bool TableImpl::RestoreCookie() {
     }
     fs.Close();
 
-    if (cookie.table_name() != _name) {
+    if (cookie.table_name() != GetName()) {
         LOG(INFO) << "[SDK COOKIE] cookie name error: " << cookie.table_name()
-            << ", should be: " << _name;
+            << ", should be: " << GetName();
         return true;
     }
 
@@ -1903,7 +1903,7 @@ bool TableImpl::RestoreCookie() {
 
 std::string TableImpl::GetCookieFilePathName(void) {
     return FLAGS_tera_sdk_cookie_path + "/"
-        + GetCookieFileName(_name, _zk_addr_list, _zk_root_path, _create_time);
+        + GetCookieFileName(GetName(), _zk_addr_list, _zk_root_path, _create_time);
 }
 
 std::string TableImpl::GetCookieLockFilePathName(void) {
@@ -2019,7 +2019,7 @@ void TableImpl::DoDumpCookie() {
     }
 
     SdkCookie cookie;
-    cookie.set_table_name(_name);
+    cookie.set_table_name(GetName());
     {
         MutexLock lock(&_meta_mutex);
         std::map<std::string, TabletMetaNode>::iterator it = _tablet_meta_list.begin();
@@ -2102,7 +2102,7 @@ void TableImpl::DumpPerfCounterLogDelay() {
 }
 
 void TableImpl::DoDumpPerfCounterLog() {
-    LOG(INFO) << "[Table " << _name << "] " <<  _perf_counter.ToLog()
+    LOG(INFO) << "[Table " << GetName() << "] " <<  _perf_counter.ToLog()
         << "pending_r: " << _cur_reader_pending_counter.Get() << ", "
         << "pending_w: " << _cur_commit_pending_counter.Get();
 }
@@ -2146,6 +2146,22 @@ void TableImpl::BreakRequest(int64_t task_id) {
         CHECK(false);
         break;
     }
+}
+
+const std::string TableImpl::GetName() {
+    MutexLock locker(&_name_mutex);
+    if (!_fresh_name.empty() && _name != _fresh_name) {
+        _name = _fresh_name;
+    }
+    printf("zzzzz: %s\n", _name.c_str());
+    return _name;
+}
+
+void TableImpl::SetFreshName(const std::string& name) {
+    MutexLock locker(&_name_mutex);
+    _fresh_name = name;
+    printf("zzzzz: %s\n", name.c_str());
+    LOG(INFO) << "fresh table name: " << name;
 }
 
 std::string CounterCoding::EncodeCounter(int64_t counter) {

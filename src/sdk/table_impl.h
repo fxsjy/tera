@@ -148,7 +148,7 @@ public:
 
     virtual ResultStream* Scan(const ScanDescriptor& desc, ErrorCode* err);
 
-    virtual const std::string GetName() { return _name; }
+    virtual const std::string GetName();
 
     virtual bool Flush();
 
@@ -354,6 +354,7 @@ private:
 
     void DumpPerfCounterLogDelay();
     void DoDumpPerfCounterLog();
+    void SetFreshName(const std::string& name);
 
 private:
     TableImpl(const TableImpl&);
@@ -420,6 +421,9 @@ private:
     /// read request will contain this member,
     /// so tabletnodes can drop the read-request that timeouted
     uint64_t _pending_timeout_ms;
+
+    mutable Mutex _name_mutex;
+    std::string _fresh_name;
 };
 
 } // namespace tera

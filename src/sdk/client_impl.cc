@@ -666,15 +666,10 @@ bool ClientImpl::IsTableEmpty(const string& table_name, ErrorCode* err) {
 bool ClientImpl::GetSnapshot(const string& name, uint64_t* snapshot, ErrorCode* err) {
     master::MasterClient master_client(_cluster->MasterAddr());
 
-    std::string internal_table_name;
-    if (!GetInternalTableName(name, err, &internal_table_name)) {
-        LOG(ERROR) << "faild to scan meta schema";
-        return false;
-    }
     GetSnapshotRequest request;
     GetSnapshotResponse response;
     request.set_sequence_id(0);
-    request.set_table_name(internal_table_name);
+    request.set_table_name(name);
 
     if (master_client.GetSnapshot(&request, &response)) {
         if (response.status() == kMasterOk) {
@@ -691,15 +686,10 @@ bool ClientImpl::GetSnapshot(const string& name, uint64_t* snapshot, ErrorCode* 
 bool ClientImpl::DelSnapshot(const string& name, uint64_t snapshot, ErrorCode* err) {
     master::MasterClient master_client(_cluster->MasterAddr());
 
-    std::string internal_table_name;
-    if (!GetInternalTableName(name, err, &internal_table_name)) {
-        LOG(ERROR) << "faild to scan meta schema";
-        return false;
-    }
     DelSnapshotRequest request;
     DelSnapshotResponse response;
     request.set_sequence_id(0);
-    request.set_table_name(internal_table_name);
+    request.set_table_name(name);
     request.set_snapshot_id(snapshot);
 
     if (master_client.DelSnapshot(&request, &response)) {
@@ -779,7 +769,7 @@ bool ClientImpl::Rename(const std::string& old_table_name,
         err->SetFailed(ErrorCode::kSystem, "failed to rename table");
         return false;
     }
-    LOG(INFO) << "rename table OK. " << old_table_name
+    LOG(INFO) << "rename table OK. " << old_table_name 
               << " -> " << new_table_name;
     return true;
 }
