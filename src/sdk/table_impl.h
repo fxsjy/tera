@@ -84,7 +84,8 @@ public:
     TableImpl(const std::string& table_name,
               const std::string& zk_root_path,
               const std::string& zk_addr_list,
-              ThreadPool* thread_pool);
+              ThreadPool* thread_pool,
+              sdk::ClusterFinder* cluster);
 
     virtual ~TableImpl();
 
@@ -193,6 +194,7 @@ public:
 
     uint64_t GetMaxMutationPendingNum() { return _max_commit_pending_num; }
     uint64_t GetMaxReaderPendingNum() { return _max_reader_pending_num; }
+    TableSchema GetTableSchema() { return  _table_schema; }
 
     struct PerfCounter {
         int64_t start_time;
@@ -356,6 +358,10 @@ private:
     void DoDumpPerfCounterLog();
     void SetFreshName(const std::string& name);
 
+    void DelayTaskWrapper(ThreadPool::Task task, int64_t task_id);
+    int64_t AddDelayTask(int64_t delay_time, ThreadPool::Task task);
+    void ClearDelayTask();
+
 private:
     TableImpl(const TableImpl&);
     void operator=(const TableImpl&);
@@ -403,20 +409,21 @@ private:
     master::MasterClient* _master_client;
     tabletnode::TabletNodeClient* _tabletnode_client;
 
-    // flags
     std::string _zk_root_path;
     std::string _zk_addr_list;
 
     ThreadPool* _thread_pool;
+    mutable Mutex _delay_task_id_mutex;
+    std::set<int64_t> _delay_task_ids;
     /// _cluster could cache the master_addr & root_table_addr.
     /// if there is no _cluster,
     ///    we have to access zookeeper whenever we need master_addr or root_table_addr.
     /// if there is _cluster,
     ///    we save master_addr & root_table_addr in _cluster, access zookeeper only once.
     sdk::ClusterFinder* _cluster;
+    bool _cluster_private;
 
     PerfCounter _perf_counter;  // calc time consumption, for performance analysis
-    int64_t _perf_log_task_id;
 
     /// read request will contain this member,
     /// so tabletnodes can drop the read-request that timeouted

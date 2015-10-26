@@ -16,9 +16,10 @@
 #include "common/thread_pool.h"
 #include "gflags/gflags.h"
 
+#include "master/gc_strategy.h"
 #include "master/tablet_manager.h"
 #include "master/tabletnode_manager.h"
-#include "master/gc_strategy.h"
+#include "master/user_manager.h"
 #include "proto/master_rpc.pb.h"
 #include "proto/table_meta.pb.h"
 #include "sdk/client_impl.h"
@@ -78,7 +79,7 @@ public:
                      DelSnapshotResponse* response,
                      google::protobuf::Closure* done);
 
-    void Rollback(const RollbackRequest* request,
+    void GetRollback(const RollbackRequest* request,
                   RollbackResponse* response,
                   google::protobuf::Closure* done);
 
@@ -121,9 +122,12 @@ public:
     void RenameTable(const RenameTableRequest* request,
                      RenameTableResponse* response,
                      google::protobuf::Closure* done);
-    
+
     void CmdCtrl(const CmdCtrlRequest* request,
                  CmdCtrlResponse* response);
+    void OperateUser(const OperateUserRequest* request,
+                     OperateUserResponse* response,
+                     google::protobuf::Closure* done);
 
     void RefreshTabletNodeList(const std::map<std::string, std::string>& ts_node_list);
 
@@ -269,7 +273,7 @@ private:
                                const std::vector<TabletPtr>& tablet_list,
                                const std::string& table_name = "");
 
-    void GetSnapshotAsync(TabletPtr tablet, int32_t timeout,
+    void GetSnapshotAsync(TabletPtr tablet, int64_t snapshot_id, int32_t timeout,
                           SnapshotClosure* done);
     void GetSnapshotCallback(int32_t tablet_id, SnapshotTask* task,
                              SnapshotRequest* master_request,
@@ -369,6 +373,14 @@ private:
                          WriteTabletRequest* request,
                          WriteTabletResponse* response,
                          bool failed, int error_code);
+    void AddUserInfoToMetaCallback(UserPtr user_ptr,
+                                   int32_t retry_times,
+                                   const OperateUserRequest* rpc_request,
+                                   OperateUserResponse* rpc_response,
+                                   google::protobuf::Closure* rpc_done,
+                                   WriteTabletRequest* request,
+                                   WriteTabletResponse* response,
+                                   bool rpc_failed, int error_code);
     void UpdateTableRecordForDisableCallback(TablePtr table, int32_t retry_times,
                                              DisableTableResponse* rpc_response,
                                              google::protobuf::Closure* rpc_done,
@@ -405,14 +417,14 @@ private:
                                     WriteTabletRequest* request,
                                     WriteTabletResponse* response,
                                     bool failed, int error_code);
-    void DeleteTableRecordCallback(TablePtr table, int32_t retry_times,
-                                   WriteTabletRequest* request,
-                                   WriteTabletResponse* response,
-                                   bool failed, int error_code);
-    void DeleteTabletRecordCallback(TabletPtr tablet, int32_t retry_times,
-                                    WriteTabletRequest* request,
-                                    WriteTabletResponse* response,
-                                    bool failed, int error_code);
+    void DeleteTableCallback(TablePtr table,
+                             std::vector<TabletPtr> tablets,
+                             int32_t retry_times,
+                             DeleteTableResponse* rpc_response,
+                             google::protobuf::Closure* rpc_done,
+                             WriteTabletRequest* request,
+                             WriteTabletResponse* response,
+                             bool failed, int error_code);
 
     void ScanMetaTableAsync(const std::string& table_name,
                             const std::string& tablet_key_start,
@@ -475,7 +487,7 @@ private:
                               bool is_delete, WriteClosure* done);
     void SuspendMetaOperation(std::vector<ToMetaFunc> meta_entries,
                               bool is_delete, WriteClosure* done);
-    
+
     void SuspendMetaOperation(const std::string& table_name,
                               const std::string& tablet_key_start,
                               const std::string& tablet_key_end,
@@ -504,9 +516,15 @@ private:
 
     bool IsRootUser(const std::string& token);
 
+    bool CheckUserPermissionOnTable(const std::string& token, TablePtr table);
+
+    template <typename Request>
+    bool HasPermissionOnTable(const Request* request, TablePtr table);
+
     template <typename Request, typename Response, typename Callback>
-    bool HasTablePermission(const Request* request, Response* response, 
-                            Callback* done, TablePtr table, const char* operate);
+    bool HasPermissionOrReturn(const Request* request, Response* response,
+                               Callback* done, TablePtr table, const char* operate);
+
     void FillAlias(const std::string& key, const std::string& value);
 private:
     mutable Mutex m_status_mutex;
@@ -517,6 +535,7 @@ private:
     bool m_restored;
     boost::shared_ptr<TabletManager> m_tablet_manager;
     boost::shared_ptr<TabletNodeManager> m_tabletnode_manager;
+    boost::shared_ptr<UserManager> m_user_manager;
     scoped_ptr<MasterZkAdapterBase> m_zk_adapter;
     scoped_ptr<Scheduler> m_size_scheduler;
     scoped_ptr<Scheduler> m_load_scheduler;

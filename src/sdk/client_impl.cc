@@ -21,7 +21,6 @@
 #include "utils/crypt.h"
 #include "utils/utils_cmd.h"
 
-DECLARE_string(flagfile);
 DECLARE_string(tera_master_meta_table_name);
 DECLARE_string(tera_sdk_conf_file);
 DECLARE_string(tera_user_identity);
@@ -110,6 +109,10 @@ bool ClientImpl::CheckReturnValue(StatusCode status, std::string& reason, ErrorC
             reason = "permission denied.";
             err->SetFailed(ErrorCode::kNoAuth, reason);
             break;
+        case kTabletReady:
+            reason = "tablet is ready.";
+            err->SetFailed(ErrorCode::kOK, reason);
+            break;
         default:
             reason = "tera master is not ready, please wait..";
             err->SetFailed(ErrorCode::kSystem, reason);
@@ -136,6 +139,7 @@ bool ClientImpl::CreateTable(const TableDescriptor& desc,
     TableDescToSchema(desc, schema);
     schema->set_alias(desc.TableName());
     schema->set_name(internal_table_name);
+    schema->set_admin(_user_identity);
     // add delimiter
     size_t delim_num = tablet_delim.size();
     for (size_t i = 0; i < delim_num; ++i) {
@@ -206,7 +210,6 @@ bool ClientImpl::DeleteTable(string name, ErrorCode* err) {
         if (CheckReturnValue(response.status(), reason, err)) {
             return true;
         }
-        LOG(ERROR) << reason << "| status: " << StatusCodeToString(response.status());
     } else {
         reason = "rpc fail to delete table: " + name;
         LOG(ERROR) << reason;
@@ -270,6 +273,96 @@ bool ClientImpl::EnableTable(string name, ErrorCode* err) {
     return false;
 }
 
+void ClientImpl::DoShowUser(OperateUserResponse& response,
+                            std::vector<std::string>& user_groups) {
+    if (!response.has_user_info()) {
+        return;
+    }
+    UserInfo user_info = response.user_info();
+    user_groups.push_back(user_info.user_name());
+    for (int i = 0; i < user_info.group_name_size(); ++i) {
+        user_groups.push_back(user_info.group_name(i));
+    }
+}
+
+bool ClientImpl::OperateUser(UserInfo& operated_user, UserOperateType type,
+                             std::vector<std::string>& user_groups, ErrorCode* err) {
+    master::MasterClient master_client(_cluster->MasterAddr());
+    OperateUserRequest request;
+    OperateUserResponse response;
+    request.set_sequence_id(0);
+    request.set_user_token(GetUserToken(_user_identity, _user_passcode));
+    request.set_op_type(type);
+    UserInfo* user_info = request.mutable_user_info();
+    user_info->CopyFrom(operated_user);
+    std::string reason;
+    if (master_client.OperateUser(&request, &response)) {
+        if (CheckReturnValue(response.status(), reason, err)) {
+            if (type == kShowUser) {
+                DoShowUser(response, user_groups);
+            }
+            return true;
+        }
+        LOG(ERROR) << reason << "| status: " << StatusCodeToString(response.status());
+    } else {
+        reason = "rpc fail to operate user: " + operated_user.user_name();
+        LOG(ERROR) << reason;
+        err->SetFailed(ErrorCode::kSystem, reason);
+    }
+    return false;
+}
+
+bool ClientImpl::CreateUser(const std::string& user,
+                            const std::string& password, ErrorCode* err) {
+    UserInfo created_user;
+    created_user.set_user_name(user);
+    created_user.set_token(GetUserToken(user, password));
+    std::vector<std::string> null;
+    return OperateUser(created_user, kCreateUser, null, err);
+}
+
+bool ClientImpl::DeleteUser(const std::string& user, ErrorCode* err) {
+    UserInfo deleted_user;
+    deleted_user.set_user_name(user);
+    std::vector<std::string> null;
+    return OperateUser(deleted_user, kDeleteUser, null, err);
+}
+
+bool ClientImpl::ChangePwd(const std::string& user,
+                           const std::string& password, ErrorCode* err) {
+    UserInfo updated_user;
+    updated_user.set_user_name(user);
+    updated_user.set_token(GetUserToken(user, password));
+    std::vector<std::string> null;
+    return OperateUser(updated_user, kChangePwd, null, err);
+}
+
+bool ClientImpl::ShowUser(const std::string& user, std::vector<std::string>& user_groups,
+                          ErrorCode* err) {
+    UserInfo user_info;
+    user_info.set_user_name(user);
+    user_info.set_token(GetUserToken(_user_identity, _user_passcode));
+    return OperateUser(user_info, kShowUser, user_groups, err);
+}
+
+bool ClientImpl::AddUserToGroup(const std::string& user_name,
+                                const std::string& group_name, ErrorCode* err) {
+    UserInfo user;
+    user.set_user_name(user_name);
+    user.add_group_name(group_name);
+    std::vector<std::string> null;
+    return OperateUser(user, kAddToGroup, null, err);
+}
+
+bool ClientImpl::DeleteUserFromGroup(const std::string& user_name,
+                                     const std::string& group_name, ErrorCode* err) {
+    UserInfo user;
+    user.set_user_name(user_name);
+    user.add_group_name(group_name);
+    std::vector<std::string> null;
+    return OperateUser(user, kDeleteFromGroup, null, err);
+}
+
 bool ClientImpl::GetInternalTableName(const std::string& table_name, ErrorCode* err,
                                       std::string* internal_table_name) {
     *internal_table_name = table_name;
@@ -282,8 +375,9 @@ bool ClientImpl::GetInternalTableName(const std::string& table_name, ErrorCode* 
     request.set_end("@~");
     if (!meta_client.ScanTablet(&request, &response)
           || response.status() != kTabletNodeOk) {
-         err->SetFailed(ErrorCode::kSystem, "system error");
-         return false;
+        LOG(ERROR) << "fail to scan meta: " << StatusCodeToString(response.status());
+        err->SetFailed(ErrorCode::kSystem, "system error");
+        return false;
     }
     err->SetFailed(ErrorCode::kOK);
     int32_t table_size = response.results().key_values_size();
@@ -311,14 +405,13 @@ Table* ClientImpl::OpenTable(const std::string& table_name,
                              ErrorCode* err) {
     std::string internal_table_name;
     if (!GetInternalTableName(table_name, err, &internal_table_name)) {
-        LOG(ERROR) << "faild to scan meta schema";
+        LOG(ERROR) << "fail to scan meta schema";
         return NULL;
     }
     err->SetFailed(ErrorCode::kOK);
     TableImpl* table = new TableImpl(internal_table_name,
-                                     _zk_root_path,
-                                     _zk_addr_list,
-                                     &_thread_pool);
+                                     _zk_root_path, _zk_addr_list,
+                                     &_thread_pool, _cluster);
     if (table == NULL) {
         LOG(ERROR) << "fail to new TableImpl.";
         return NULL;
@@ -703,16 +796,24 @@ bool ClientImpl::DelSnapshot(const string& name, uint64_t snapshot, ErrorCode* e
     return false;
 }
 
-bool ClientImpl::Rollback(const string& name, uint64_t snapshot, ErrorCode* err) {
+bool ClientImpl::Rollback(const string& name, uint64_t snapshot, 
+                          const std::string& rollback_name, ErrorCode* err) {
     master::MasterClient master_client(_cluster->MasterAddr());
 
+    std::string internal_table_name;
+    if (!GetInternalTableName(name, err, &internal_table_name)) {
+        LOG(ERROR) << "faild to scan meta schema";
+        return false;
+    }
     RollbackRequest request;
     RollbackResponse response;
     request.set_sequence_id(0);
-    request.set_table_name(name);
+    request.set_table_name(internal_table_name);
     request.set_snapshot_id(snapshot);
+    request.set_rollback_name(rollback_name);
+    std::cout << name << " " << rollback_name << std::endl;
 
-    if (master_client.Rollback(&request, &response)) {
+    if (master_client.GetRollback(&request, &response)) {
         if (response.status() == kMasterOk) {
             std::cout << name << " rollback to snapshot sucessfully" << std::endl;
             return true;
@@ -870,43 +971,56 @@ bool ClientImpl::ParseTabletEntry(const TabletMeta& meta, std::vector<TabletInfo
 static Mutex g_mutex;
 static bool g_is_glog_init = false;
 
+static int SpecifiedFlagfileCount(const std::string& confpath) {
+    int count = 0;
+    if (!confpath.empty()) {
+        count++;
+    }
+    if (!FLAGS_tera_sdk_conf_file.empty()) {
+        count++;
+    }
+    return count;
+}
+
 static int InitFlags(const std::string& confpath, const std::string& log_prefix) {
     MutexLock locker(&g_mutex);
     // search conf file, priority:
-    //   user-specified > ./tera.flag > ../conf/tera.flag > env-var
-    if (!FLAGS_flagfile.empty()) {
-        // do nothing
-    } else if (!confpath.empty() && IsExist(confpath)) {
-        FLAGS_flagfile = confpath;
-    } else if (!FLAGS_tera_sdk_conf_file.empty() && IsExist(confpath)) {
-        FLAGS_flagfile = FLAGS_tera_sdk_conf_file;
-    } else if (IsExist("./tera.flag")) {
-        FLAGS_flagfile = "./tera.flag";
-    } else if (IsExist("../conf/tera.flag")) {
-        FLAGS_flagfile = "../conf/tera.flag";
-    } else if (IsExist(utils::GetValueFromeEnv("TERA_CONF"))) {
-        FLAGS_flagfile = utils::GetValueFromeEnv("TERA_CONF");
-    } else {
-        LOG(ERROR) << "config file not found";
+    //   user-specified > ./tera.flag > ../conf/tera.flag
+    std::string flagfile("--flagfile=");
+    if (SpecifiedFlagfileCount(confpath) > 1) {
+        LOG(ERROR) << "should specify no more than one config file";
         return -1;
     }
 
-    // init user identity & role
-    std::string cur_identity = utils::GetValueFromeEnv("USER");
-    if (cur_identity.empty()) {
-        cur_identity = "other";
-    }
-    if (FLAGS_tera_user_identity.empty()) {
-        FLAGS_tera_user_identity = cur_identity;
+    if (!confpath.empty() && IsExist(confpath)){
+        flagfile += confpath;
+    } else if(!confpath.empty() && !IsExist(confpath)){
+        LOG(ERROR) << "specified config file(function argument) not found";
+        return -1;
+    } else if (!FLAGS_tera_sdk_conf_file.empty() && IsExist(confpath)) {
+        flagfile += FLAGS_tera_sdk_conf_file;
+    } else if (!FLAGS_tera_sdk_conf_file.empty() && !IsExist(confpath)) {
+        LOG(ERROR) << "specified config file(FLAGS_tera_sdk_conf_file) not found";
+        return -1;
+    } else if (IsExist("./tera.flag")) {
+        flagfile += "./tera.flag";
+    } else if (IsExist("../conf/tera.flag")) {
+        flagfile += "../conf/tera.flag";
+    } else if (IsExist(utils::GetValueFromEnv("TERA_CONF"))) {
+        flagfile += utils::GetValueFromEnv("TERA_CONF");
+    } else {
+        LOG(ERROR) << "hasn't specify the flagfile, but default config file not found";
+        return -1;
     }
 
-    int argc = 1;
-    char** argv = new char*[2];
-    argv[0] = (char*)"dummy";
-    argv[1] = NULL;
+    int argc = 2;
+    char** argv = new char*[3];
+    argv[0] = const_cast<char*>("dummy");
+    argv[1] = const_cast<char*>(flagfile.c_str());
+    argv[2] = NULL;
 
-    // the gflags will get flags from FLAGS_flagfile
-    ::google::ParseCommandLineFlags(&argc, &argv, true);
+    // the gflags will get flags from falgfile
+    ::google::ParseCommandLineFlags(&argc, &argv, false);
     if (!g_is_glog_init) {
         ::google::InitGoogleLogging(log_prefix.c_str());
         utils::SetupLog(log_prefix);
@@ -915,7 +1029,7 @@ static int InitFlags(const std::string& confpath, const std::string& log_prefix)
     delete[] argv;
 
     LOG(INFO) << "USER = " << FLAGS_tera_user_identity;
-    LOG(INFO) << "Load config file: " << FLAGS_flagfile;
+    LOG(INFO) << "Load config file: " << flagfile;
     return 0;
 }
 

@@ -46,10 +46,10 @@ void RemoteMaster::DelSnapshot(google::protobuf::RpcController* controller,
     m_thread_pool->AddTask(callback);
 }
 
-void RemoteMaster::Rollback(google::protobuf::RpcController* controller,
-                            const RollbackRequest* request,
-                            RollbackResponse* response,
-                            google::protobuf::Closure* done) {
+void RemoteMaster::GetRollback(google::protobuf::RpcController* controller,
+                               const RollbackRequest* request,
+                               RollbackResponse* response,
+                               google::protobuf::Closure* done) {
     ThreadPool::Task callback =
         boost::bind(&RemoteMaster::DoRollback, this, controller,
                     request, response, done);
@@ -156,6 +156,16 @@ void RemoteMaster::CmdCtrl(google::protobuf::RpcController* controller,
     m_thread_pool->AddTask(callback);
 }
 
+void RemoteMaster::OperateUser(google::protobuf::RpcController* controller,
+                               const OperateUserRequest* request,
+                               OperateUserResponse* response,
+                               google::protobuf::Closure* done) {
+    ThreadPool::Task callback =
+        boost::bind(&RemoteMaster::DoOperateUser, this, controller,
+                    request, response, done);
+    m_thread_pool->AddTask(callback);
+}
+
 // internal
 
 void RemoteMaster::DoGetSnapshot(google::protobuf::RpcController* controller,
@@ -177,11 +187,11 @@ void RemoteMaster::DoDelSnapshot(google::protobuf::RpcController* controller,
 }
 
 void RemoteMaster::DoRollback(google::protobuf::RpcController* controller,
-                            const RollbackRequest* request,
-                            RollbackResponse* response,
-                            google::protobuf::Closure* done) {
+                             const RollbackRequest* request,
+                             RollbackResponse* response,
+                             google::protobuf::Closure* done) {
     LOG(INFO) << "accept RPC (Rollback)";
-    m_master_impl->Rollback(request, response, done);
+    m_master_impl->GetRollback(request, response, done);
     LOG(INFO) << "finish RPC (Rollback)";
 }
 
@@ -275,6 +285,15 @@ void RemoteMaster::DoCmdCtrl(google::protobuf::RpcController* controller,
     LOG(INFO) << "finish RPC (CmdCtrl)";
 
     done->Run();
+}
+
+void RemoteMaster::DoOperateUser(google::protobuf::RpcController* controller,
+                                 const OperateUserRequest* request,
+                                 OperateUserResponse* response,
+                                 google::protobuf::Closure* done) {
+    LOG(INFO) << "accept RPC (OperateUser)";
+    m_master_impl->OperateUser(request, response, done);
+    LOG(INFO) << "finish RPC (OperateUser)";
 }
 
 void RemoteMaster::RenameTable(google::protobuf::RpcController* controller,

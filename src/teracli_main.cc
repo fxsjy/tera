@@ -43,8 +43,10 @@ DEFINE_int32(tera_client_batch_put_num, 1000, "num of each batch in batch put mo
 DEFINE_int32(tera_client_scan_package_size, 1024, "the package size (in KB) of each scan request");
 DEFINE_bool(tera_client_scan_async_enabled, false, "enable the streaming scan mode");
 
+DEFINE_int64(scan_pack_interval, 5000, "scan timeout");
 DEFINE_int64(snapshot, 0, "read | scan snapshot");
 DEFINE_string(rollback_switch, "close", "Pandora's box, do not open");
+DEFINE_string(rollback_name, "", "rollback operation's name");
 
 volatile int32_t g_start_time = 0;
 volatile int32_t g_end_time = 0;
@@ -142,10 +144,12 @@ void Usage(const std::string& prg_name) {
                 show all tabletnodes or single tabletnode info.             \n\
                 (show more detail when using suffix \"x\")                  \n\
                                                                             \n\
-       hash username password                                               \n\
-                calculate the hash of username & password                   \n\
-                username & password used in client flag file                \n\
-                hash used in master flag file                               \n\
+       user create    username password                                     \n\
+       user changepwd username new-password                                 \n\
+       user show      username                                              \n\
+       user delete    username                                              \n\
+       user addtogroup      username groupname                              \n\
+       user deletefromgroup username groupname                              \n\
                                                                             \n\
        version\n\n";
 }
@@ -176,7 +180,7 @@ void UsageMore(const std::string& prg_name) {
        version\n\n";
 }
 int32_t CreateOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
-    if (argc < 2) {
+    if (argc < 3) {
         Usage(argv[0]);
         return -1;
     }
@@ -190,26 +194,8 @@ int32_t CreateOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
     }
     if (argc == 4) {
         // have tablet delimiters
-        std::string delim_file = argv[3];
-        std::ifstream fin(delim_file.c_str());
-        if (fin.fail()) {
-            LOG(ERROR) << "fail to read delimiter file: " << delim_file;
-            return -1;
-        }
-        std::string str;
-        while (fin >> str) {
-            delimiters.push_back(str);
-        }
-        bool is_delim_error = false;
-        for (size_t i = 1; i < delimiters.size() - 1; i++) {
-            if (delimiters[i] <= delimiters[i-1]) {
-                LOG(ERROR) << "delimiter error: line: " << i + 1
-                    << ", [" << delimiters[i] << "]";
-                is_delim_error = true;
-            }
-        }
-        if (is_delim_error) {
-            LOG(ERROR) << "create table fail, delimiter error.";
+        if (!ParseDelimiterFile(argv[3], &delimiters)) {
+            LOG(ERROR) << "fail to parse delimiter file.";
             return -1;
         }
     } else if (argc > 4) {
@@ -239,15 +225,14 @@ int32_t CreateByFileOp(Client* client, int32_t argc, char** argv, ErrorCode* err
 
     std::vector<std::string> delimiters;
     if (argc == 4) {
-        std::ifstream fin(argv[3]);
-        if (fin.fail()) {
-            LOG(ERROR) << "fail to read delimiter file.";
+        // have tablet delimiters
+        if (!ParseDelimiterFile(argv[3], &delimiters)) {
+            LOG(ERROR) << "fail to parse delimiter file.";
             return -1;
         }
-        std::string str;
-        while (fin >> str) {
-            delimiters.push_back(str);
-        }
+    } else if (argc > 4) {
+        LOG(ERROR) << "too many args: " << argc;
+        return -1;
     }
     if (!client->CreateTable(table_desc, delimiters, err)) {
         LOG(ERROR) << "fail to create table, "
@@ -307,7 +292,7 @@ int32_t DropOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
 
     std::string tablename = argv[2];
     if (!client->DeleteTable(tablename, err)) {
-        LOG(ERROR) << "fail to delete table";
+        LOG(ERROR) << "fail to delete table, " << err->GetReason();
         return -1;
     }
     return 0;
@@ -818,6 +803,7 @@ int32_t ScanOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
     desc.SetEnd(end_rowkey);
     desc.SetBufferSize(FLAGS_tera_client_scan_package_size << 10);
     desc.SetAsync(FLAGS_tera_client_scan_async_enabled);
+    desc.SetPackInterval(FLAGS_scan_pack_interval);
 
     if (argc == 5) {
         // scan all cells
@@ -1726,25 +1712,6 @@ int32_t GetRandomNumKey(int32_t key_size,std::string *p_key){
     return 0;
 }
 
-int32_t HashOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
-    if (argc != 4) {
-      Usage(argv[0]);
-      return -1;
-    }
-
-    std::string user = argv[2];
-    std::string password = argv[3];
-    std::string hash;
-    if (GetHashString(user + ":" + password, 0, &hash) != 0) {
-        std::cout << "invalid arguments" << std::endl;
-        return -1;
-    }
-    std::cout << "password hash:" << hash << ", place it in master flag file."
-        << " and place password(not hash) in client flag file" << std::endl;
-
-    return 0;
-}
-
 int32_t SnapshotOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
     if (argc < 4) {
       Usage(argv[0]);
@@ -1766,7 +1733,14 @@ int32_t SnapshotOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
         }
         std::cout << "new snapshot: " << snapshot << std::endl;
     }  else if (FLAGS_rollback_switch == "open" && strcmp(argv[3], "rollback") == 0) {
-        if (!client->Rollback(tablename, FLAGS_snapshot, err)) {
+        if (FLAGS_snapshot == 0) {
+            std::cerr << "missing or invalid --snapshot option" << std::endl;
+            return -1;
+        } else if (FLAGS_rollback_name == "") {
+            std::cerr << "missing or invalid --rollback_name option" << std::endl;
+            return -1;
+        }
+        if (!client->Rollback(tablename, FLAGS_snapshot, FLAGS_rollback_name, err)) {
             LOG(ERROR) << "fail to rollback to snapshot: " << err->GetReason();
             return -1;
         }
@@ -2089,7 +2063,9 @@ int32_t Meta2Op(Client *client, int32_t argc, char** argv) {
             const tera::KeyValuePair& record = response.results().key_values(i);
             last_record_key = record.key();
             char first_key_char = record.key()[0];
-            if (first_key_char == '@') {
+            if (first_key_char == '~') {
+                std::cout << "(user: " << record.key().substr(1) << ")" << std::endl;
+            } else if (first_key_char == '@') {
                 ParseMetaTableKeyValue(record.key(), record.value(), table_list.add_meta());
             } else if (first_key_char > '@') {
                 ParseMetaTableKeyValue(record.key(), record.value(), tablet_list.add_meta());
@@ -2270,6 +2246,93 @@ int32_t Meta2Op(Client *client, int32_t argc, char** argv) {
     return 0;
 }
 
+static int32_t CreateUser(Client* client, const std::string& user,
+                          const std::string& password, ErrorCode* err) {
+    if (!client->CreateUser(user, password, err)) {
+        LOG(ERROR) << "fail to create user: " << user
+            << ", " << strerr(*err);
+        return -1;
+    }
+    return 0;
+}
+
+static int32_t DeleteUser(Client* client, const std::string& user, ErrorCode* err) {
+    if (!client->DeleteUser(user, err)) {
+        LOG(ERROR) << "fail to delete user: " << user
+            << ", " << strerr(*err);
+        return -1;
+    }
+    return 0;
+}
+
+static int32_t ChangePwd(Client* client, const std::string& user,
+                         const std::string& password, ErrorCode* err) {
+    if (!client->ChangePwd(user, password, err)) {
+        LOG(ERROR) << "fail to update user: " << user
+            << ", " << strerr(*err);
+        return -1;
+    }
+    return 0;
+}
+
+static int32_t ShowUser(Client* client, const std::string& user, ErrorCode* err) {
+    std::vector<std::string> user_infos;
+    if (!client->ShowUser(user, user_infos, err)) {
+        LOG(ERROR) << "fail to show user: " << user
+            << ", " << strerr(*err);
+        return -1;
+    }
+    if (user_infos.size() < 1) {
+        return -1;
+    }
+    std::cout << "user:" << user_infos[0]
+        << "\ngroups (" << user_infos.size() - 1 << "):";
+    for (size_t i = 1; i < user_infos.size(); ++i) {
+        std::cout << user_infos[i] << " ";
+    }
+    std::cout << std::endl;
+    return 0;
+}
+
+static int32_t AddUserToGroup(Client* client, const std::string& user,
+                                const std::string& group, ErrorCode* err) {
+    if (!client->AddUserToGroup(user, group, err)) {
+        LOG(ERROR) << "fail to add user: " << user
+            << " to group:" << group << strerr(*err);
+        return -1;
+    }
+    return 0;
+}
+
+static int32_t DeleteUserFromGroup(Client* client, const std::string& user,
+                                     const std::string& group, ErrorCode* err) {
+    if (!client->DeleteUserFromGroup(user, group, err)) {
+        LOG(ERROR) << "fail to delete user: " << user
+            << " from group: " << group << strerr(*err);
+        return -1;
+    }
+    return 0;
+}
+
+int32_t UserOp(Client* client, int32_t argc, char** argv, ErrorCode* err) {
+    std::string op = argv[2];
+    if ((argc == 5) && (op == "create")) {
+        return CreateUser(client, argv[3], argv[4], err);
+    } else if ((argc == 5) && (op == "changepwd")) {
+        return ChangePwd(client, argv[3], argv[4], err);
+    } else if ((argc == 4) && (op == "show")) {
+        return ShowUser(client, argv[3], err);
+    } else if ((argc == 4) && (op == "delete")) {
+        return DeleteUser(client, argv[3], err);
+    } else if ((argc == 5) && (op == "addtogroup")) {
+        return AddUserToGroup(client, argv[3], argv[4], err);
+    } else if ((argc == 5) && (op == "deletefromgroup")) {
+        return DeleteUserFromGroup(client, argv[3], argv[4], err);
+    }
+    Usage(argv[0]);
+    return -1;
+}
+
 int main(int argc, char* argv[]) {
     ::google::ParseCommandLineFlags(&argc, &argv, true);
 
@@ -2280,7 +2343,7 @@ int main(int argc, char* argv[]) {
 
     int ret = 0;
     ErrorCode error_code;
-    Client* client = Client::NewClient();
+    Client* client = Client::NewClient(FLAGS_flagfile, NULL);
 
     if (client == NULL) {
         LOG(ERROR) << "client instance not exist";
@@ -2355,12 +2418,12 @@ int main(int argc, char* argv[]) {
         ret = FindTsOp(client, argc, argv, &error_code);
     } else if (cmd == "meta2") {
         ret = Meta2Op(client, argc, argv);
+    } else if (cmd == "user") {
+        ret = UserOp(client, argc, argv, &error_code);
     } else if (cmd == "version") {
         PrintSystemVersion();
     } else if (cmd == "snapshot") {
         ret = SnapshotOp(client, argc, argv, &error_code);
-    } else if (cmd == "hash") {
-        ret = HashOp(client, argc, argv, &error_code);
     } else if (cmd == "help") {
         Usage(argv[0]);
     } else if (cmd == "helpmore") {

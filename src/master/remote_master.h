@@ -30,10 +30,10 @@ public:
                      DelSnapshotResponse* response,
                      google::protobuf::Closure* done);
 
-    void Rollback(google::protobuf::RpcController* controller,
-                  const RollbackRequest* request,
-                  RollbackResponse* response,
-                  google::protobuf::Closure* done);
+    void GetRollback(google::protobuf::RpcController* controller,
+                     const RollbackRequest* request,
+                     RollbackResponse* response,
+                     google::protobuf::Closure* done);
 
     void CreateTable(google::protobuf::RpcController* controller,
                      const CreateTableRequest* request,
@@ -84,6 +84,11 @@ public:
                  const CmdCtrlRequest* request,
                  CmdCtrlResponse* response,
                  google::protobuf::Closure* done);
+
+    void OperateUser(google::protobuf::RpcController* controller,
+                     const OperateUserRequest* request,
+                     OperateUserResponse* response,
+                     google::protobuf::Closure* done);
 
     void RenameTable(google::protobuf::RpcController* controller,
                 const RenameTableRequest* request,
@@ -153,6 +158,10 @@ private:
                    CmdCtrlResponse* response,
                    google::protobuf::Closure* done);
 
+    void DoOperateUser(google::protobuf::RpcController* controller,
+                       const OperateUserRequest* request,
+                       OperateUserResponse* response,
+                       google::protobuf::Closure* done);
 private:
     MasterImpl* m_master_impl;
     scoped_ptr<ThreadPool> m_thread_pool;
